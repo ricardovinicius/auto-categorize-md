@@ -1,5 +1,8 @@
+#!/usr/bin/env python3
+
 import json
 import shutil
+import typing
 import unicodedata
 import argparse
 
@@ -83,7 +86,11 @@ def check_if_note_already_mapped(data: SystemData, note: Note):
     return False
 
 genai.configure(api_key=settings.gen_ai_key)
-model = genai.GenerativeModel("gemini-1.5-flash")
+model = genai.GenerativeModel("gemini-2.0-flash-exp")
+
+class OutputSchema(typing.TypedDict):
+    category: str
+    subcategory: str
 
 def categorize_note(note: Note, model: genai.GenerativeModel, categories: List[Category]):
     note_text = ""
@@ -91,26 +98,31 @@ def categorize_note(note: Note, model: genai.GenerativeModel, categories: List[C
     with open(note.path, "r") as file:
         note_text = file.read()
     
-    prompt = f"""Leia o texto abaixo e determine a categoria e a subcategoria mais adequadas com base nas opções fornecidas.
+    # TODO: fazer com que a formatação resultante do prompt seja formatado direto no modelo
+    prompt = f"""Analyze the text below and determine the most appropriate category and subcategory based on the options provided.  
 
-        Para cada categoria, existem subcategorias possíveis. Escolha a subcategoria mais relevante para o texto ou, se nenhuma se aplicar, sugira uma nova subcategoria dentro da categoria escolhida.
+        For each category, there are predefined subcategories. Select the subcategory that best matches the text. Be precise when choosing subcategories, avoiding overgeneralization.  
 
-        Categoria(s) e Subcategoria(s) disponíveis:
-        {', '.join([f"{category.name}: {', '.join(category.subcategories)}" for category in categories])}
+        Category and Subcategory options:  
+        {', '.join([f"{category.name}: {', '.join(category.subcategories)}" for category in categories])}  
 
-        Se nenhuma categoria ou subcategoria se aplicar ao texto, você pode sugerir uma nova categoria e subcategoria que melhor o descrevam.
+        If none of the given options fit, suggest a new category and subcategory that best describe the text.  
 
-        Responda apenas com a resposta em formato JSON, sem aspas triplas ou qualquer formatação, com a estrutura abaixo:
+        Respond strictly in JSON format using the schema below:  
         {{
-        "category": "<nome da categoria>",
-        "subcategory": "<nome da subcategoria>"
-        }}
+            "category": "<chosen category>",
+            "subcategory": "<chosen subcategory>"
+        }}  
 
-        Texto: {note_text}
+        Text: {note_text}  
 
-        Responda apenas com a resposta JSON, sem explicações adicionais. Não utilize 'Uncategorized' ou variações genéricas como resposta. Escolha ou sugira sempre uma categoria e subcategoria relevantes."""
+        Do not include explanations or additional text outside the JSON response. Avoid generic labels like "Uncategorized." Always provide a specific and relevant category and subcategory, or suggest new ones if necessary.
+        """
 
-    response = model.generate_content(prompt)
+
+    response = model.generate_content(prompt, generation_config=genai.GenerationConfig(
+        response_mime_type="application/json", response_schema=OutputSchema
+    ))
     print(response.text)
     return json.loads(response.text)
 
@@ -118,6 +130,9 @@ def map_notes():
     notes_dir = Path(INPUT_NOTES_PATH)
     
     for note_file in notes_dir.iterdir():
+        if note_file.name == "metadata.json":
+            continue
+        
         note: Note = dumps_note(note_file)
         
         if not check_if_note_already_mapped(system_data, note):
